@@ -1,5 +1,6 @@
 use std::time::Duration;
 
+use actix_cors::Cors;
 use actix_files::Files;
 use actix_web::{App, HttpServer, web};
 use time::{UtcOffset, format_description::parse};
@@ -46,7 +47,15 @@ async fn main() -> std::io::Result<()> {
     info!("Starting web proxy on 127.0.0.1:8080");
 
     HttpServer::new(move || {
+        let cors = Cors::default()
+            .allow_any_origin()
+            .allow_any_method()
+            .allow_any_header()
+            .expose_headers(["X-Session-Id"])
+            .max_age(3600);
+
         App::new()
+            .wrap(cors)
             .app_data(manager.clone())
             .route("/connect", web::post().to(routes::connect))
             .route("/character", web::post().to(routes::character))
@@ -57,7 +66,7 @@ async fn main() -> std::io::Result<()> {
             .route("/message", web::post().to(routes::message))
             .route("/leave", web::post().to(routes::leave))
             .route("/poll", web::get().to(routes::poll))
-            .service(Files::new("/", "static").index_file("index.html"))
+            .service(Files::new("/", "../frontend").index_file("index.html"))
     })
     .bind(("127.0.0.1", 8080))?
     .run()

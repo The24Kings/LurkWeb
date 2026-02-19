@@ -5,7 +5,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 
 use crate::listener;
 
@@ -38,8 +38,11 @@ impl SessionManager {
     /// Connect to a Lurk server and create a new session.
     pub fn create_session(&self, addr: &str, port: u16) -> Result<SessionId, String> {
         let address = format!("{}:{}", addr, port);
+        info!(address = %address, "Attempting TCP connection to game server");
         let tcp_stream = TcpStream::connect(&address)
             .map_err(|e| format!("Failed to connect to {}: {}", address, e))?;
+
+        info!("Connected");
 
         let stream = Arc::new(tcp_stream);
         let queue = Arc::new(Mutex::new(VecDeque::<String>::new()));
@@ -50,6 +53,8 @@ impl SessionManager {
             Arc::clone(&queue),
             Arc::clone(&disconnected),
         );
+
+        info!("Spawned listening thread {:?}", handle);
 
         let session_id = uuid::Uuid::new_v4().to_string();
 
@@ -72,7 +77,11 @@ impl SessionManager {
 
     /// Retrieve the Session from SessionID
     pub fn get_session(&self, id: &SessionId) -> Option<Arc<Session>> {
-        self.sessions.lock().unwrap().get(id).cloned()
+        let result = self.sessions.lock().unwrap().get(id).cloned();
+        if result.is_none() {
+            debug!(session_id = %id, "Session lookup miss");
+        }
+        result
     }
 
     /// Remove the Session from provided SessionID
@@ -97,6 +106,10 @@ impl SessionManager {
             .filter(|(_, session)| session.last_activity.lock().unwrap().elapsed() > timeout)
             .map(|(id, _)| id.clone())
             .collect();
+
+        if !stale.is_empty() {
+            warn!(count = stale.len(), "Reaping stale sessions");
+        }
 
         for id in stale {
             warn!("Reaping stale session: {}", id);

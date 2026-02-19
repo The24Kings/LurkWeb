@@ -4,7 +4,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use lurk_lcsc::Protocol;
-use tracing::{error, info};
+use tracing::{debug, error, info};
 
 use crate::protocol::protocol_to_json;
 
@@ -22,6 +22,7 @@ pub fn spawn_listener(
             match Protocol::recv(&stream) {
                 Ok(packet) => {
                     let json = protocol_to_json(&packet);
+                    debug!(packet_type = %(&packet), "Received packet from game server");
                     let json_str = json.to_string();
                     queue.lock().unwrap().push_back(json_str);
                 }
