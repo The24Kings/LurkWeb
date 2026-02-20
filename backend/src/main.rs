@@ -66,7 +66,8 @@ async fn main() -> std::io::Result<()> {
             .route("/message", web::post().to(routes::message))
             .route("/leave", web::post().to(routes::leave))
             .route("/poll", web::get().to(routes::poll))
-            .service(Files::new("/", "../frontend").index_file("index.html"))
+            .route("/session_status", web::get().to(routes::session_status))
+            .service(Files::new("/", "frontend").index_file("index.html"))
     })
     .bind(("127.0.0.1", 8080))?
     .run()

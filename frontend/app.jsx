@@ -78,6 +78,21 @@ const api = {
         return r;
     },
     poll() { return this.req('GET', '/poll'); },
+    sessionStatus() { return this.req('GET', '/session_status'); },
+
+    // Rejoin an existing session by setting base/sid and checking status
+    async rejoin(proxyUrl, sessionId) {
+        this.base = proxyUrl.replace(/\/+$/, '');
+        this.sid = sessionId;
+        log.info('API', `Attempting to rejoin session ${sessionId} via ${proxyUrl}`);
+        const status = await this.sessionStatus();
+        if (!status.active) {
+            this.sid = null;
+            throw new Error('Session is no longer active');
+        }
+        log.info('API', `Rejoined session ${sessionId}`);
+        return status;
+    },
 };
 
 // ─────────────────────────────────────────────────────────
@@ -157,7 +172,7 @@ function ContextMenu({ x, y, items, onClose }) {
 // ─────────────────────────────────────────────────────────
 //  Entity Card
 // ─────────────────────────────────────────────────────────
-function EntityCard({ entity, onLoot, onMessage, onFight }) {
+function EntityCard({ entity, onLoot, onMessage, onFight, disabled }) {
     const [showCtx, setShowCtx] = useState(null);
     const alive = isAlive(entity.flags);
     const monster = isMonster(entity.flags);
@@ -200,7 +215,7 @@ function EntityCard({ entity, onLoot, onMessage, onFight }) {
             )}
             {/* Inline quick-action buttons */}
             <div className="entity-actions">
-                {!alive && monster && (entity.gold ?? 0) > 0 && <button className="entity-action-btn loot" onClick={() => onLoot(entity.name)}>Loot</button>}
+                {!alive && monster && (entity.gold ?? 0) > 0 && <button className="entity-action-btn loot" onClick={() => onLoot(entity.name)} disabled={disabled}>Loot</button>}
             </div>
             {showCtx && <ContextMenu {...showCtx} onClose={() => setShowCtx(null)} />}
         </div>
@@ -229,16 +244,26 @@ function CharacterModal({ onSubmit, onCancel, budget, existing }) {
 
     function handleSubmit(e) {
         e.preventDefault();
-        if (remaining < 0 || !name.trim()) return;
+        if (!name.trim()) return;
+        // Auto-allocate remaining points
+        let a = attack, d = defense, r = regen;
+        let leftover = total - a - d - r;
+        if (leftover < 0) return; // over budget
+        if (leftover > 0) {
+            const third = Math.floor(leftover / 3);
+            a += third;
+            d += third;
+            r += leftover - third - third; // remainder goes to regen
+        }
         // Build flags string matching bitflags serde format
         const flagParts = ['ALIVE', 'READY'];
         if (joinBattle) flagParts.push('BATTLE');
         onSubmit({
             name: name.trim(),
             flags: flagParts.join(' | '),
-            attack,
-            defense,
-            regen,
+            attack: a,
+            defense: d,
+            regen: r,
             health: 0,
             gold: 0,
             current_room: 0,
@@ -378,18 +403,39 @@ function ConnectScreen({ onConnect }) {
 //  Game View
 // ─────────────────────────────────────────────────────────
 function GameView({ sessionId, serverAddr, serverPort, proxyUrl, onDisconnect }) {
-    const [messages, setMessages] = useState([]);
-    const [room, setRoom] = useState(null);
-    const [connections, setConnections] = useState([]); // {room_number, room_name, description}
-    const [entities, setEntities] = useState({});
-    const [myChar, setMyChar] = useState(null);
+    // ── State persistence helpers ────────────────────
+    const stateKey = `lurk_state_${sessionId}`;
+    const savedState = useMemo(() => {
+        try {
+            const raw = localStorage.getItem(stateKey);
+            if (raw) {
+                const s = JSON.parse(raw);
+                log.info('STATE', 'Restored saved state', s);
+                return s;
+            }
+        } catch (e) { log.warn('STATE', 'Failed to parse saved state', e); }
+        return null;
+    }, [stateKey]);
+
+    const [messages, setMessages] = useState(savedState?.messages || []);
+    const [room, setRoom] = useState(savedState?.room || null);
+    const [connections, setConnections] = useState(savedState?.connections || []);
+    const [entities, setEntities] = useState(savedState?.entities || {});
+    const [myChar, setMyChar] = useState(savedState?.myChar || null);
     const [charModal, setCharModal] = useState(false);
-    const [initPoints, setInitPoints] = useState(100);
+    const [initPoints, setInitPoints] = useState(savedState?.initPoints || 100);
     const [connected, setConnected] = useState(true);
-    const [hasStarted, setHasStarted] = useState(false);
+    const [hasStarted, setHasStarted] = useState(savedState?.hasStarted || false);
+    const [toasts, setToasts] = useState([]);
     const [rightTab, setRightTab] = useState('all');
     const [uptime, setUptime] = useState(0);
-    const connectTimeRef = useRef(Date.now());
+    const connectTimeRef = useRef(savedState?.connectTime || Date.now());
+
+    // Save state to localStorage on changes
+    useEffect(() => {
+        const state = { messages, room, connections, entities, myChar, initPoints, hasStarted, connectTime: connectTimeRef.current };
+        try { localStorage.setItem(stateKey, JSON.stringify(state)); } catch { }
+    }, [messages, room, connections, entities, myChar, initPoints, hasStarted, stateKey]);
 
     // Message bar state
     const [msgTo, setMsgTo] = useState('');
@@ -397,10 +443,21 @@ function GameView({ sessionId, serverAddr, serverPort, proxyUrl, onDisconnect })
 
     const msgEndRef = useRef(null);
     const pollingRef = useRef(true);
+    const pendingCharRef = useRef(null);
 
     const addMsg = useCallback((type, sender, text, preformatted = false) => {
         setMessages(prev => [...prev, mkMsg(type, sender, text, preformatted)]);
     }, []);
+
+    const addToast = useCallback((text) => {
+        const id = Date.now() + Math.random();
+        setToasts(prev => [...prev, { id, text }]);
+        setTimeout(() => setToasts(prev => prev.filter(t => t.id !== id)), 5000);
+    }, []);
+
+    const addError = useCallback((sender, text) => {
+        addToast(`${sender}: ${text}`);
+    }, [addToast]);
 
     // ── Packet handler ──────────────────────────────────
     const processPacket = useCallback((pkt) => {
@@ -418,7 +475,7 @@ function GameView({ sessionId, serverAddr, serverPort, proxyUrl, onDisconnect })
                 break;
             }
             case 'ERROR':
-                addMsg('t-error', `Error (${pkt.error || '?'})`, pkt.message || '');
+                addError(`Error (${pkt.error || '?'})`, pkt.message || '');
                 break;
 
             case 'ACCEPT': {
@@ -429,8 +486,15 @@ function GameView({ sessionId, serverAddr, serverPort, proxyUrl, onDisconnect })
                 };
                 addMsg('t-accept', 'Accepted', typeMap[pkt.accept_type] || `Type ${pkt.accept_type}`);
                 if (pkt.accept_type === 6) setHasStarted(true);
-                // Server accepts Character (10) — auto-start fires, treat as started
-                if (pkt.accept_type === 10) setHasStarted(true);
+                // Server accepts Character (10) — show char, close modal, auto-start
+                if (pkt.accept_type === 10) {
+                    if (pendingCharRef.current) {
+                        setMyChar(pendingCharRef.current);
+                        pendingCharRef.current = null;
+                    }
+                    setCharModal(false);
+                    setHasStarted(true);
+                }
                 break;
             }
             case 'ROOM':
@@ -472,14 +536,14 @@ function GameView({ sessionId, serverAddr, serverPort, proxyUrl, onDisconnect })
 
             case 'DISCONNECTED':
                 setConnected(false);
-                addMsg('t-error', 'System', 'Disconnected from server.');
+                addError('System', 'Disconnected from server.');
                 break;
 
             default:
                 log.warn('PKT', `Unhandled packet type: ${pt}`, pkt);
                 addMsg('t-system', 'Packet', JSON.stringify(pkt));
         }
-    }, [addMsg]);
+    }, [addMsg, addError]);
 
     // ── Polling loop ────────────────────────────────────
     useEffect(() => {
@@ -499,12 +563,11 @@ function GameView({ sessionId, serverAddr, serverPort, proxyUrl, onDisconnect })
                     if (err.status === 404) {
                         log.warn('POLL', 'Session expired (404)');
                         setConnected(false);
-                        addMsg('t-error', 'System', 'Session expired.');
+                        addError('System', 'Session expired.');
                         break;
                     }
-                    log.warn('POLL', 'Poll error, retrying in 2s', err);
-                    // network blip — wait a bit then retry
-                    await new Promise(r => setTimeout(r, 2000));
+                    log.warn('POLL', 'Poll error, retrying in 3s', err);
+                    await new Promise(r => setTimeout(r, 3000));
                 }
             }
             log.info('POLL', 'Poll loop ended');
@@ -529,35 +592,40 @@ function GameView({ sessionId, serverAddr, serverPort, proxyUrl, onDisconnect })
 
     // ── Actions ─────────────────────────────────────────
     async function doFight() {
+        if (isDead) return;
         log.info('ACTION', 'Fight');
-        try { await api.fight(); } catch (e) { addMsg('t-error', 'Error', e?.data?.error || 'Fight failed'); }
+        try { await api.fight(); } catch (e) { addError('Error', e?.data?.error || 'Fight failed'); }
     }
 
     async function doChangeRoom(num) {
+        if (isDead) return;
         log.info('ACTION', `Change room → ${num}`);
         try { await api.changeRoom(parseInt(num, 10)); }
-        catch (e) { addMsg('t-error', 'Error', e?.data?.error || 'Move failed'); }
+        catch (e) { addError('Error', e?.data?.error || 'Move failed'); }
     }
 
     async function doLoot(name) {
+        if (isDead) return;
         log.info('ACTION', `Loot → ${name}`);
         try { await api.loot(name); }
-        catch (e) { addMsg('t-error', 'Error', e?.data?.error || 'Loot failed'); }
+        catch (e) { addError('Error', e?.data?.error || 'Loot failed'); }
     }
 
     async function doMessage(to, text) {
+        if (isDead) return;
         if (!text.trim()) return;
         log.info('ACTION', `Message → ${to || '(all)'}: ${text}`);
         try {
             await api.message(to, myChar?.name || '', text);
             addMsg('t-you', myChar?.name || 'You', `→ ${to || 'everyone'}: ${text}`);
             setMsgText('');
-        } catch (e) { addMsg('t-error', 'Error', e?.data?.error || 'Message failed'); }
+        } catch (e) { addError('Error', e?.data?.error || 'Message failed'); }
     }
 
     async function doLeave() {
         log.info('ACTION', 'Leave');
         pollingRef.current = false;
+        try { localStorage.removeItem(stateKey); } catch { }
         try { await api.leave(); } catch { }
         onDisconnect();
     }
@@ -565,17 +633,17 @@ function GameView({ sessionId, serverAddr, serverPort, proxyUrl, onDisconnect })
     async function doCharacter(pkt) {
         log.info('ACTION', `Character "${pkt.name}" (ATK:${pkt.attack} DEF:${pkt.defense} REG:${pkt.regen})`);
         try {
+            pendingCharRef.current = pkt;
             await api.character(pkt);
-            setMyChar(pkt);
-            setCharModal(false);
-            addMsg('t-system', 'System', `Character "${pkt.name}" sent to server.`);
+            addMsg('t-system', 'System', `Character "${pkt.name}" sent to server. Waiting for accept...`);
             // Auto-start after character creation
             if (!hasStarted) {
                 log.info('ACTION', 'Auto-starting after character sent');
                 try { await api.start(); } catch { }
             }
         } catch (e) {
-            addMsg('t-error', 'Error', e?.data?.error || 'Character creation failed');
+            pendingCharRef.current = null;
+            addError('Error', e?.data?.error || 'Character creation failed');
         }
     }
 
@@ -593,6 +661,7 @@ function GameView({ sessionId, serverAddr, serverPort, proxyUrl, onDisconnect })
     const players = useMemo(() => entityList.filter(e => !isMonster(e.flags)), [entityList]);
     const monsters = useMemo(() => entityList.filter(e => isMonster(e.flags)), [entityList]);
     const filtered = rightTab === 'players' ? players : rightTab === 'monsters' ? monsters : entityList;
+    const isDead = myChar && !isAlive(myChar.flags);
 
     return (
         <div className="app">
@@ -645,6 +714,7 @@ function GameView({ sessionId, serverAddr, serverPort, proxyUrl, onDisconnect })
                                             {connections.map(c => (
                                                 <button key={c.room_number} className="room-link"
                                                     onClick={() => doChangeRoom(c.room_number)}
+                                                    disabled={isDead}
                                                     title={c.description || c.room_name}>
                                                     {c.room_name}
                                                 </button>
@@ -695,7 +765,7 @@ function GameView({ sessionId, serverAddr, serverPort, proxyUrl, onDisconnect })
                                             {myChar.description}
                                         </div>
                                     )}
-                                    <button className="btn btn-danger fight-btn" onClick={doFight} disabled={!connected}>
+                                    <button className="btn btn-danger fight-btn" onClick={doFight} disabled={!connected || isDead}>
                                         ⚔️ Fight
                                     </button>
                                 </>
@@ -768,6 +838,7 @@ function GameView({ sessionId, serverAddr, serverPort, proxyUrl, onDisconnect })
                                         onLoot={doLoot}
                                         onMessage={startMessageTo}
                                         onFight={doFight}
+                                        disabled={isDead}
                                     />
                                 ))
                             )}
@@ -781,7 +852,7 @@ function GameView({ sessionId, serverAddr, serverPort, proxyUrl, onDisconnect })
                             <form className="msg-compose-stacked" onSubmit={e => { e.preventDefault(); doMessage(msgTo, msgText); }}>
                                 <div className="form-group-stacked">
                                     <label>To</label>
-                                    <input placeholder="(all)" value={msgTo}
+                                    <input placeholder="Recipient" value={msgTo}
                                         onChange={e => setMsgTo(e.target.value)} />
                                 </div>
                                 <div className="form-group-stacked">
@@ -790,7 +861,7 @@ function GameView({ sessionId, serverAddr, serverPort, proxyUrl, onDisconnect })
                                         onChange={e => setMsgText(e.target.value)} />
                                 </div>
                                 <button type="submit" className="btn btn-primary btn-sm" style={{ width: '100%' }}
-                                    disabled={!connected || !msgText.trim()}>Send</button>
+                                    disabled={!connected || isDead || !msgTo.trim() || !msgText.trim()}>Send</button>
                             </form>
                         </div>
                     </div>
@@ -805,6 +876,36 @@ function GameView({ sessionId, serverAddr, serverPort, proxyUrl, onDisconnect })
                     budget={initPoints}
                 />
             )}
+
+            {/* ── Death Overlay ─────────────────────── */}
+            {isDead && (
+                <div className="modal-overlay">
+                    <div className="modal death-modal">
+                        <div className="death-icon">💀</div>
+                        <h3>You have fallen!</h3>
+                        <p style={{ color: 'var(--text-dim)', marginBottom: '1rem' }}>
+                            Your character has been slain. Disconnect and reconnect to create a new character.
+                        </p>
+                        <button className="btn btn-primary btn-block" onClick={doLeave}>
+                            Restart
+                        </button>
+                    </div>
+                </div>
+            )}
+
+            {/* ── Toast Container (portal to body) ── */}
+            {ReactDOM.createPortal(
+                <div className="toast-container">
+                    {toasts.map(t => (
+                        <div key={t.id} className="toast-error">
+                            <span className="toast-icon">⚠️</span>
+                            <span className="toast-text">{t.text}</span>
+                            <button className="toast-close" onClick={() => setToasts(prev => prev.filter(x => x.id !== t.id))}>×</button>
+                        </div>
+                    ))}
+                </div>,
+                document.body
+            )}
         </div>
     );
 }
@@ -814,6 +915,46 @@ function GameView({ sessionId, serverAddr, serverPort, proxyUrl, onDisconnect })
 // ─────────────────────────────────────────────────────────
 function App() {
     const [session, setSession] = useState(null);
+    const [checking, setChecking] = useState(true);
+
+    // On mount, check URL hash for existing session
+    useEffect(() => {
+        const params = new URLSearchParams(window.location.hash.slice(1));
+        const sid = params.get('sid');
+        const proxy = params.get('proxy');
+        const addr = params.get('addr');
+        const port = params.get('port');
+        if (sid && proxy) {
+            log.info('APP', `Found session in URL: ${sid}`);
+            api.rejoin(proxy, sid)
+                .then(() => {
+                    setSession({ sid, addr: addr || '', port: port || '', proxy });
+                })
+                .catch((e) => {
+                    log.warn('APP', 'Session rejoin failed, clearing URL', e);
+                    window.location.hash = '';
+                })
+                .finally(() => setChecking(false));
+        } else {
+            setChecking(false);
+        }
+    }, []);
+
+    // Update URL hash when session changes
+    useEffect(() => {
+        if (session) {
+            const params = new URLSearchParams();
+            params.set('sid', session.sid);
+            params.set('proxy', session.proxy);
+            params.set('addr', session.addr);
+            params.set('port', session.port);
+            window.location.hash = params.toString();
+        } else {
+            window.location.hash = '';
+        }
+    }, [session]);
+
+    if (checking) return <div className="connect-screen"><div className="connect-box"><div className="logo"><div className="logo-title">LURK</div><div className="logo-sub">Reconnecting…</div></div></div></div>;
 
     return session ? (
         <GameView

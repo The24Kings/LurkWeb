@@ -204,7 +204,7 @@ pub async fn poll(req: HttpRequest, manager: web::Data<SessionManager>) -> HttpR
     debug!("GET /poll — waiting for packets");
 
     let start = Instant::now();
-    let timeout = Duration::from_secs(5);
+    let timeout = Duration::from_secs(3);
     let sleep_duration = Duration::from_millis(2);
     let mut batch: Vec<serde_json::Value> = Vec::new();
 
@@ -246,4 +246,19 @@ pub async fn poll(req: HttpRequest, manager: web::Data<SessionManager>) -> HttpR
     }
 
     HttpResponse::Ok().json(batch)
+}
+
+// GET /session_status
+pub async fn session_status(req: HttpRequest, manager: web::Data<SessionManager>) -> HttpResponse {
+    let session = match get_session(&req, &manager) {
+        Ok(s) => s,
+        Err(resp) => return resp,
+    };
+    touch(&session);
+    let disconnected = session.disconnected.load(Ordering::Relaxed);
+    info!(disconnected, "GET /session_status");
+    HttpResponse::Ok().json(json!({
+        "active": !disconnected,
+        "disconnected": disconnected
+    }))
 }
