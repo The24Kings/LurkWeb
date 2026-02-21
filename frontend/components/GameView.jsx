@@ -519,7 +519,7 @@ function GameView({ sessionId, serverAddr, serverPort, onDisconnect }) {
                         <div key={t.id} className="toast-error">
                             <span className="toast-icon">⚠️</span>
                             <span className="toast-text">{t.text}</span>
-                            <button className="toast-close" onClick={() => setToasts(prev => prev.filter(x => x.id !== t.id))}>×</button>
+                            <button className="toast-close" onClick={() => setToasts(prev => prev.filter(x => x.id !== t.id))}>x</button>
                         </div>
                     ))}
                 </div>,
