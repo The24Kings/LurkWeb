@@ -179,6 +179,10 @@
             font-size: 0.85rem;
         }
 
+        .form-group textarea {
+            resize: vertical;
+        }
+
         .form-group input:focus,
         .form-group select:focus,
         .form-group textarea:focus {
@@ -753,50 +757,6 @@
             color: var(--yellow);
         }
 
-        /* ── Action Bar (sticky bottom) ───────────────── */
-        .action-bar {
-            grid-column: 1 / -1;
-            /* span all 3 grid columns */
-            display: flex;
-            flex-wrap: wrap;
-            align-items: center;
-            gap: 0.5rem;
-            padding: 0.45rem 0.75rem;
-            background: var(--bg2);
-            border-top: 1px solid var(--border);
-            flex-shrink: 0;
-            z-index: 10;
-        }
-
-        .action-group {
-            display: flex;
-            align-items: flex-end;
-            gap: 0.35rem;
-        }
-
-        .action-divider {
-            width: 1px;
-            height: 28px;
-            background: var(--border);
-            flex-shrink: 0;
-        }
-
-        .msg-compose {
-            display: flex;
-            align-items: flex-end;
-            gap: 0.35rem;
-            flex: 1;
-            min-width: 250px;
-        }
-
-        .msg-compose .form-group:last-of-type {
-            flex: 1;
-        }
-
-        .msg-compose .form-group:last-of-type input {
-            width: 100%;
-        }
-
         /* ── Fight Button in Character Panel ──────── */
         .fight-btn {
             width: 100%;
@@ -916,18 +876,124 @@
             gap: 0.6rem;
         }
 
+        .modal-section {
+            background: var(--bg);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            padding: 0.75rem;
+            display: flex;
+            flex-direction: column;
+            gap: 0.5rem;
+        }
+
         .stat-grid {
             display: grid;
             grid-template-columns: repeat(3, 1fr);
             gap: 0.5rem;
         }
 
+        .stat-grid .form-group {
+            min-width: 0;
+        }
+
+        .stat-grid .form-group input {
+            width: 100%;
+            min-width: 0;
+        }
+
+        /* ── Toggle Switch ─────────────────────────────── */
+        .toggle-row {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 0.3rem 0;
+        }
+
+        .toggle-row label {
+            font-size: 0.7rem;
+            color: var(--fg2);
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+
+        .toggle-switch {
+            position: relative;
+            width: 36px;
+            height: 20px;
+            flex-shrink: 0;
+        }
+
+        .toggle-switch input {
+            opacity: 0;
+            width: 0;
+            height: 0;
+        }
+
+        .toggle-slider {
+            position: absolute;
+            inset: 0;
+            background: var(--bg4);
+            border-radius: 10px;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+
+        .toggle-slider::before {
+            content: '';
+            position: absolute;
+            left: 2px;
+            top: 2px;
+            width: 16px;
+            height: 16px;
+            background: var(--fg2);
+            border-radius: 50%;
+            transition: transform 0.2s, background 0.2s;
+        }
+
+        .toggle-switch input:checked+.toggle-slider {
+            background: var(--accent2);
+        }
+
+        .toggle-switch input:checked+.toggle-slider::before {
+            transform: translateX(16px);
+            background: #fff;
+        }
+
+        .points-row {
+            display: flex;
+            align-items: center;
+            gap: 0.4rem;
+        }
+
         .points-display {
+            flex: 1;
             text-align: center;
             font-family: var(--mono);
             font-size: 0.85rem;
-            padding: 0.3rem;
+            padding: 0.3rem 0.5rem;
             border-radius: var(--radius);
+        }
+
+        .quick-alloc-btn {
+            background: none;
+            border: 1px solid currentColor;
+            border-radius: var(--radius);
+            color: inherit;
+            font-size: 0.85rem;
+            width: 24px;
+            height: 24px;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            opacity: 0.7;
+            transition: opacity 0.15s, background 0.15s;
+            flex-shrink: 0;
+        }
+
+        .quick-alloc-btn:hover {
+            opacity: 1;
+            background: rgba(255, 255, 255, 0.08);
         }
 
         .points-display.ok {
@@ -1043,7 +1109,17 @@
 
 <body>
     <div id="root"></div>
-    <script type="text/babel" src="app.jsx"></script>
+
+    <!-- Utilities (plain JS, no JSX — runs synchronously before Babel scripts) -->
+    <script src="components/utils.js"></script>
+
+    <!-- Components (Babel-transformed, executed in document order) -->
+    <script type="text/babel" src="components/ContextMenu.jsx"></script>
+    <script type="text/babel" src="components/EntityCard.jsx"></script>
+    <script type="text/babel" src="components/CharacterModal.jsx"></script>
+    <script type="text/babel" src="components/ConnectScreen.jsx"></script>
+    <script type="text/babel" src="components/GameView.jsx"></script>
+    <script type="text/babel" src="components/App.jsx"></script>
 </body>
 
 </html>
