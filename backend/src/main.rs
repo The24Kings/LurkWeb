@@ -3,6 +3,8 @@ use std::time::Duration;
 use actix_cors::Cors;
 use actix_files::Files;
 use actix_web::{App, HttpServer, web};
+use clap::Parser;
+use clap_verbosity_flag::Verbosity;
 use time::{UtcOffset, format_description::parse};
 use tracing::info;
 use tracing_subscriber::fmt::time::OffsetTime;
@@ -14,6 +16,12 @@ mod session;
 
 use session::SessionManager;
 
+#[derive(Debug, Parser)]
+struct Cli {
+    #[command(flatten)]
+    verbosity: Verbosity,
+}
+
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
     // Setup tracing subscriber for logging
@@ -22,7 +30,10 @@ async fn main() -> std::io::Result<()> {
     let time_offset = UtcOffset::current_local_offset().unwrap_or(UtcOffset::UTC);
     let timer = OffsetTime::new(time_offset, timer);
 
+    let cli = Cli::parse();
+
     tracing_subscriber::fmt()
+        .with_max_level(cli.verbosity)
         .with_line_number(true)
         .with_target(false)
         .with_timer(timer)
