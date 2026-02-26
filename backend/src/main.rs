@@ -17,7 +17,14 @@ mod session;
 use session::SessionManager;
 
 #[derive(Debug, Parser)]
+#[command(version, about, long_about = None)]
 struct Cli {
+    // Address that users will connect to
+    #[arg(short, long, default_value_t = String::from("127.0.0.1"))]
+    addr: String,
+    /// Port to bind the Web Proxy
+    #[arg(short, long, default_value_t = 8080)]
+    port: u16,
     #[command(flatten)]
     verbosity: Verbosity,
 }
@@ -55,7 +62,7 @@ async fn main() -> std::io::Result<()> {
         }
     });
 
-    info!("Starting web proxy on 127.0.0.1:8080");
+    info!("Starting web proxy on {}:{}", cli.addr, cli.port);
 
     HttpServer::new(move || {
         let cors = Cors::default()
@@ -80,7 +87,7 @@ async fn main() -> std::io::Result<()> {
             .route("/session_status", web::get().to(routes::session_status))
             .service(Files::new("/", "frontend").index_file("index.html"))
     })
-    .bind(("127.0.0.1", 8080))?
+    .bind((cli.addr, cli.port))?
     .run()
     .await
 }
