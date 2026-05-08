@@ -2,9 +2,9 @@ use std::sync::Arc;
 use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
 
-use actix_web::{HttpRequest, HttpResponse, web};
-use lurk_lcsc::{
-    PktChangeRoom, PktCharacter, PktFight, PktLeave, PktLoot, PktMessage, PktStart, Protocol,
+use actix_web::{HttpRequest, HttpResponse, HttpResponseBuilder, web};
+use lurk_protocol::{
+    PktChangeRoom, PktCharacter, PktFight, PktLeave, PktLoot, PktMessage, PktStart, send_to,
 };
 use serde_json::json;
 use tracing::{debug, error, info, warn};
@@ -34,12 +34,9 @@ fn touch(session: &Session) {
     *session.last_activity.lock().unwrap() = Instant::now();
 }
 
-/// Send a Protocol packet over the session's stream.
-fn send_packet(packet: Protocol) -> Result<(), HttpResponse> {
-    packet.send().map_err(|e| {
-        error!("Failed to send packet: {}", e);
-        HttpResponse::InternalServerError().json(json!({"error": format!("Send failed: {}", e)}))
-    })
+/// Wrap a Lurk Error into an HTTP Status response
+fn wrap_error(resp: &mut HttpResponseBuilder, e: String) -> HttpResponse {
+    resp.json(json!({"error": e}))
 }
 
 // POST /connect
@@ -55,7 +52,7 @@ pub async fn connect(
         }
         Err(e) => {
             error!(address = %body.address, port = body.port, error = %e, "Connection to game server failed");
-            HttpResponse::BadGateway().json(json!({"error": e}))
+            wrap_error(&mut HttpResponse::BadGateway(), e)
         }
     }
 }
@@ -72,10 +69,10 @@ pub async fn character(
     };
     touch(&session);
     info!(name = %body.name, attack = body.attack, defense = body.defense, regen = body.regen, "POST /character — sending character");
-    let packet = Protocol::Character(Arc::clone(&session.stream), body.into_inner());
-    match send_packet(packet) {
+
+    match send_to(&session.stream, &body.into_inner()) {
         Ok(()) => HttpResponse::Ok().finish(),
-        Err(resp) => resp,
+        Err(e) => wrap_error(&mut HttpResponse::InternalServerError(), e.to_string()),
     }
 }
 
@@ -91,10 +88,10 @@ pub async fn change_room(
     };
     touch(&session);
     info!(room_number = body.room_number, "POST /change_room");
-    let packet = Protocol::ChangeRoom(Arc::clone(&session.stream), body.into_inner());
-    match send_packet(packet) {
+
+    match send_to(&session.stream, &body.into_inner()) {
         Ok(()) => HttpResponse::Ok().finish(),
-        Err(resp) => resp,
+        Err(e) => wrap_error(&mut HttpResponse::InternalServerError(), e.to_string()),
     }
 }
 
@@ -110,10 +107,10 @@ pub async fn loot(
     };
     touch(&session);
     info!(target_name = %body.target_name, "POST /loot");
-    let packet = Protocol::Loot(Arc::clone(&session.stream), body.into_inner());
-    match send_packet(packet) {
+
+    match send_to(&session.stream, &body.into_inner()) {
         Ok(()) => HttpResponse::Ok().finish(),
-        Err(resp) => resp,
+        Err(e) => wrap_error(&mut HttpResponse::InternalServerError(), e.to_string()),
     }
 }
 
@@ -125,10 +122,10 @@ pub async fn fight(req: HttpRequest, manager: web::Data<SessionManager>) -> Http
     };
     touch(&session);
     info!("POST /fight");
-    let packet = Protocol::Fight(Arc::clone(&session.stream), PktFight::default());
-    match send_packet(packet) {
+
+    match send_to(&session.stream, &PktFight::default()) {
         Ok(()) => HttpResponse::Ok().finish(),
-        Err(resp) => resp,
+        Err(e) => wrap_error(&mut HttpResponse::InternalServerError(), e.to_string()),
     }
 }
 
@@ -140,10 +137,10 @@ pub async fn start(req: HttpRequest, manager: web::Data<SessionManager>) -> Http
     };
     touch(&session);
     info!("POST /start");
-    let packet = Protocol::Start(Arc::clone(&session.stream), PktStart::default());
-    match send_packet(packet) {
+
+    match send_to(&session.stream, &PktStart::default()) {
         Ok(()) => HttpResponse::Ok().finish(),
-        Err(resp) => resp,
+        Err(e) => wrap_error(&mut HttpResponse::InternalServerError(), e.to_string()),
     }
 }
 
@@ -159,10 +156,10 @@ pub async fn message(
     };
     touch(&session);
     info!(recipient = %body.recipient, sender = %body.sender, len = body.message_len, "POST /message");
-    let packet = Protocol::Message(Arc::clone(&session.stream), body.into_inner());
-    match send_packet(packet) {
+
+    match send_to(&session.stream, &body.into_inner()) {
         Ok(()) => HttpResponse::Ok().finish(),
-        Err(resp) => resp,
+        Err(e) => wrap_error(&mut HttpResponse::InternalServerError(), e.to_string()),
     }
 }
 
@@ -184,8 +181,7 @@ pub async fn leave(req: HttpRequest, manager: web::Data<SessionManager>) -> Http
 
     // Send leave packet before removing the session
     if let Some(session) = manager.get_session(&session_id) {
-        let packet = Protocol::Leave(Arc::clone(&session.stream), PktLeave::default());
-        let _ = packet.send();
+        let _ = send_to(&session.stream, &PktLeave::default());
     }
 
     manager.remove_session(&session_id);

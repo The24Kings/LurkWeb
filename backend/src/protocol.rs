@@ -1,4 +1,4 @@
-use lurk_lcsc::Protocol;
+use lurk_protocol::Protocol;
 use serde::Deserialize;
 use serde_json::Value;
 use tracing::{trace, warn};
@@ -14,20 +14,20 @@ pub struct ConnectRequest {
 /// logging the JSON at trace level for deep debugging.
 pub fn protocol_to_json(msg: &Protocol) -> Value {
     let value = match msg {
-        Protocol::Message(_, pkt) => serde_json::to_value(pkt),
-        Protocol::ChangeRoom(_, pkt) => serde_json::to_value(pkt),
-        Protocol::Fight(_, pkt) => serde_json::to_value(pkt),
-        Protocol::PVPFight(_, pkt) => serde_json::to_value(pkt),
-        Protocol::Loot(_, pkt) => serde_json::to_value(pkt),
-        Protocol::Start(_, pkt) => serde_json::to_value(pkt),
-        Protocol::Error(_, pkt) => serde_json::to_value(pkt),
-        Protocol::Accept(_, pkt) => serde_json::to_value(pkt),
-        Protocol::Room(_, pkt) => serde_json::to_value(pkt),
-        Protocol::Character(_, pkt) => serde_json::to_value(pkt),
-        Protocol::Game(_, pkt) => serde_json::to_value(pkt),
-        Protocol::Leave(_, pkt) => serde_json::to_value(pkt),
-        Protocol::Connection(_, pkt) => serde_json::to_value(pkt),
-        Protocol::Version(_, pkt) => serde_json::to_value(pkt),
+        Protocol::Message(pkt) => serde_json::to_value(pkt),
+        Protocol::ChangeRoom(pkt) => serde_json::to_value(pkt),
+        Protocol::Fight(pkt) => serde_json::to_value(pkt),
+        Protocol::PVPFight(pkt) => serde_json::to_value(pkt),
+        Protocol::Loot(pkt) => serde_json::to_value(pkt),
+        Protocol::Start(pkt) => serde_json::to_value(pkt),
+        Protocol::Error(pkt) => serde_json::to_value(pkt),
+        Protocol::Accept(pkt) => serde_json::to_value(pkt),
+        Protocol::Room(pkt) => serde_json::to_value(pkt),
+        Protocol::Character(pkt) => serde_json::to_value(pkt),
+        Protocol::Game(pkt) => serde_json::to_value(pkt),
+        Protocol::Leave(pkt) => serde_json::to_value(pkt),
+        Protocol::Connection(pkt) => serde_json::to_value(pkt),
+        Protocol::Version(pkt) => serde_json::to_value(pkt),
     };
 
     match value {

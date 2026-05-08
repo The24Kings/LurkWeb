@@ -3,7 +3,7 @@ use std::net::TcpStream;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
-use lurk_lcsc::Protocol;
+use lurk_protocol::Protocol;
 use tracing::{debug, error, info};
 
 use crate::protocol::protocol_to_json;
